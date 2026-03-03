@@ -4,6 +4,9 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// 常量：最多保留的记录条数
+const MAX_RECORDS = 33;
+
 // 中间件：解析纯文本请求体
 app.use(express.text({ type: 'text/plain' }));
 app.use(cors());
@@ -14,7 +17,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// --- 确保表存在的函数（可选）---
+// --- 确保表存在的函数 ---
 async function ensureTable() {
   try {
     const checkQuery = `
@@ -50,13 +53,37 @@ async function ensureTable() {
   }
 }
 
+// --- 清理旧数据：保持总数不超过 MAX_RECORDS ---
+async function trimOldRecords() {
+  try {
+    // 查询当前总记录数
+    const countResult = await pool.query('SELECT COUNT(*) FROM crowd_data');
+    const total = parseInt(countResult.rows[0].count);
+    if (total > MAX_RECORDS) {
+      const excess = total - MAX_RECORDS;
+      // 删除最旧的 excess 条记录（按 timestamp 升序）
+      const deleteQuery = `
+        DELETE FROM crowd_data
+        WHERE id IN (
+          SELECT id FROM crowd_data
+          ORDER BY timestamp ASC
+          LIMIT $1
+        )
+      `;
+      await pool.query(deleteQuery, [excess]);
+      console.log(`已删除 ${excess} 条旧记录，当前总数: ${MAX_RECORDS}`);
+    }
+  } catch (err) {
+    console.error('清理旧记录时出错:', err);
+  }
+}
+
 // --- 1. 接收纯文本数据的接口（给ESP32调用）---
 app.post('/api/upload', async (req, res) => {
-  const rawText = req.body;  // req.body 就是纯文本字符串
+  const rawText = req.body;
   console.log('收到原始数据:', rawText);
 
   // 解析格式：device_id|people_count|location|timestamp|detection_time
-  // 例如：CAM01|5|Entrance|1700000000|0.125
   const parts = rawText.split('|');
   if (parts.length < 5) {
     return res.status(400).json({ error: '格式错误，需要至少5个字段' });
@@ -68,16 +95,20 @@ app.post('/api/upload', async (req, res) => {
   const timestamp = parseInt(parts[3]);
   const detection_time = parseFloat(parts[4]);
 
-  // 简单校验
   if (isNaN(people_count) || isNaN(timestamp) || isNaN(detection_time) || device_id === '' || location === '') {
     return res.status(400).json({ error: '字段解析失败或存在空值' });
   }
 
   try {
+    // 插入新数据
     await pool.query(
       'INSERT INTO crowd_data (device_id, people_count, location, timestamp, detection_time) VALUES ($1, $2, $3, $4, $5)',
       [device_id, people_count, location, timestamp, detection_time]
     );
+
+    // 清理旧记录，保持总数不超过 MAX_RECORDS
+    await trimOldRecords();
+
     res.status(201).json({ status: 'ok' });
   } catch (err) {
     console.error('数据库写入失败:', err);
@@ -118,6 +149,7 @@ app.get('/api/locations', async (req, res) => {
 ensureTable().then(() => {
   app.listen(port, () => {
     console.log(`服务器运行在 http://localhost:${port}`);
+    console.log(`最多保留 ${MAX_RECORDS} 条记录`);
   });
 }).catch(err => {
   console.error('启动失败:', err);
