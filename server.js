@@ -145,6 +145,25 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
+app.get('/api/recent', async (req, res) => {
+  const { location, limit } = req.query;
+  if (!location) {
+    return res.status(400).json({ error: '需要提供 location 参数' });
+  }
+  const recordLimit = parseInt(limit) || 11; // 默认返回11条
+
+  try {
+    const result = await pool.query(
+      'SELECT people_count, timestamp FROM crowd_data WHERE location = $1 ORDER BY timestamp DESC LIMIT $2',
+      [location, recordLimit]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('查询最近数据失败:', err);
+    res.status(500).json({ error: '数据库错误' });
+  }
+});
+
 // --- 启动服务器 ---
 ensureTable().then(() => {
   app.listen(port, () => {
@@ -155,3 +174,4 @@ ensureTable().then(() => {
   console.error('启动失败:', err);
   process.exit(1);
 });
+
