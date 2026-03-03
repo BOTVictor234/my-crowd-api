@@ -4,20 +4,54 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 让我们的API能处理JSON数据和跨域请求
 app.use(express.json());
 app.use(cors());
 
-// 创建一个连接池，稍后从环境变量读取数据库地址
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Render需要这个SSL设置
+  ssl: { rejectUnauthorized: false }
 });
 
-// --- 1. 接收数据的接口 (给ESP32调用) ---
+// --- 新增：确保表存在的函数 ---
+async function ensureTable() {
+  try {
+    // 检查表是否存在
+    const checkQuery = `
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'crowd_data'
+      );
+    `;
+    const res = await pool.query(checkQuery);
+    const tableExists = res.rows[0].exists;
+    
+    if (!tableExists) {
+      console.log('表 crowd_data 不存在，正在创建...');
+      const createQuery = `
+        CREATE TABLE crowd_data (
+          id SERIAL PRIMARY KEY,
+          device_id VARCHAR(50),
+          people_count INTEGER,
+          location VARCHAR(100),
+          timestamp BIGINT,
+          detection_time FLOAT,
+          created_at TIMESTAMP DEFAULT NOW()
+        );
+      `;
+      await pool.query(createQuery);
+      console.log('表 crowd_data 创建成功');
+    } else {
+      console.log('表 crowd_data 已存在');
+    }
+  } catch (err) {
+    console.error('检查/创建表时出错:', err);
+    process.exit(1); // 如果数据库连接失败，直接退出
+  }
+}
+
+// --- API 路由 ---
 app.post('/api/upload', async (req, res) => {
   console.log("收到上传请求:", req.body);
-  // 假设ESP32发来的数据格式是 { data: { device_id: "...", people_count: ..., location: "...", timestamp: ..., detection_time: ... } }
   const { device_id, people_count, location, timestamp, detection_time } = req.body.data || {};
 
   if (!device_id || people_count === undefined || !location) {
@@ -36,7 +70,6 @@ app.post('/api/upload', async (req, res) => {
   }
 });
 
-// --- 2. 获取最新数据的接口 (给小程序调用) ---
 app.get('/api/latest', async (req, res) => {
   const { location } = req.query;
   if (!location) return res.status(400).json({ error: '需要提供 location 参数' });
@@ -54,7 +87,6 @@ app.get('/api/latest', async (req, res) => {
   }
 });
 
-// --- 3. 获取所有地区列表的接口 (给小程序用) ---
 app.get('/api/locations', async (req, res) => {
   try {
     const result = await pool.query('SELECT DISTINCT location FROM crowd_data');
@@ -65,7 +97,12 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// 启动服务器
-app.listen(port, () => {
-  console.log(`服务器运行在 http://localhost:${port}`);
+// --- 启动服务器前先确保表存在 ---
+ensureTable().then(() => {
+  app.listen(port, () => {
+    console.log(`服务器运行在 http://localhost:${port}`);
+  });
+}).catch(err => {
+  console.error('启动失败:', err);
+  process.exit(1);
 });
