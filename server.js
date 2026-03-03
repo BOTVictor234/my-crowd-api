@@ -4,18 +4,19 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json());
+// 中间件：解析纯文本请求体
+app.use(express.text({ type: 'text/plain' }));
 app.use(cors());
 
+// 数据库连接池
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// --- 新增：确保表存在的函数 ---
+// --- 确保表存在的函数（可选）---
 async function ensureTable() {
   try {
-    // 检查表是否存在
     const checkQuery = `
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
@@ -45,17 +46,31 @@ async function ensureTable() {
     }
   } catch (err) {
     console.error('检查/创建表时出错:', err);
-    process.exit(1); // 如果数据库连接失败，直接退出
+    process.exit(1);
   }
 }
 
-// --- API 路由 ---
+// --- 1. 接收纯文本数据的接口（给ESP32调用）---
 app.post('/api/upload', async (req, res) => {
-  console.log("收到上传请求:", req.body);
-  const { device_id, people_count, location, timestamp, detection_time } = req.body.data || {};
+  const rawText = req.body;  // req.body 就是纯文本字符串
+  console.log('收到原始数据:', rawText);
 
-  if (!device_id || people_count === undefined || !location) {
-    return res.status(400).json({ error: '数据不完整' });
+  // 解析格式：device_id|people_count|location|timestamp|detection_time
+  // 例如：CAM01|5|Entrance|1700000000|0.125
+  const parts = rawText.split('|');
+  if (parts.length < 5) {
+    return res.status(400).json({ error: '格式错误，需要至少5个字段' });
+  }
+
+  const device_id = parts[0].trim();
+  const people_count = parseInt(parts[1]);
+  const location = parts[2].trim();
+  const timestamp = parseInt(parts[3]);
+  const detection_time = parseFloat(parts[4]);
+
+  // 简单校验
+  if (isNaN(people_count) || isNaN(timestamp) || isNaN(detection_time) || device_id === '' || location === '') {
+    return res.status(400).json({ error: '字段解析失败或存在空值' });
   }
 
   try {
@@ -70,6 +85,7 @@ app.post('/api/upload', async (req, res) => {
   }
 });
 
+// --- 2. 获取最新数据的接口（给小程序调用）---
 app.get('/api/latest', async (req, res) => {
   const { location } = req.query;
   if (!location) return res.status(400).json({ error: '需要提供 location 参数' });
@@ -87,6 +103,7 @@ app.get('/api/latest', async (req, res) => {
   }
 });
 
+// --- 3. 获取所有地区列表的接口（给小程序用）---
 app.get('/api/locations', async (req, res) => {
   try {
     const result = await pool.query('SELECT DISTINCT location FROM crowd_data');
@@ -97,7 +114,7 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
-// --- 启动服务器前先确保表存在 ---
+// --- 启动服务器 ---
 ensureTable().then(() => {
   app.listen(port, () => {
     console.log(`服务器运行在 http://localhost:${port}`);
