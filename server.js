@@ -5,7 +5,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // 常量：最多保留的记录条数
-const MAX_RECORDS = 33;
+const MAX_RECORDS = 66;
 
 // 中间件：解析纯文本请求体
 app.use(express.text({ type: 'text/plain' }));
@@ -177,3 +177,4 @@ ensureTable().then(() => {
   console.error('启动失败:', err);
   process.exit(1);
 });
+
