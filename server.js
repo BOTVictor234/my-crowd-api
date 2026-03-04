@@ -66,7 +66,7 @@ async function trimOldRecords() {
         DELETE FROM crowd_data
         WHERE id IN (
           SELECT id FROM crowd_data
-          ORDER BY timestamp ASC
+          ORDER BY created_at ASC
           LIMIT $1
         )
       `;
@@ -174,4 +174,3 @@ ensureTable().then(() => {
   console.error('启动失败:', err);
   process.exit(1);
 });
-
