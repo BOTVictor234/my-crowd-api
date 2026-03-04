@@ -61,7 +61,7 @@ async function trimOldRecords() {
     const total = parseInt(countResult.rows[0].count);
     if (total > MAX_RECORDS) {
       const excess = total - MAX_RECORDS;
-      // 删除最旧的 excess 条记录（按 timestamp 升序）
+      // 按 created_at 升序删除最旧的记录
       const deleteQuery = `
         DELETE FROM crowd_data
         WHERE id IN (
@@ -122,8 +122,9 @@ app.get('/api/latest', async (req, res) => {
   if (!location) return res.status(400).json({ error: '需要提供 location 参数' });
 
   try {
+    // 修改：按 created_at 降序，返回最新插入的记录
     const result = await pool.query(
-      'SELECT people_count, timestamp FROM crowd_data WHERE location = $1 ORDER BY timestamp DESC LIMIT 1',
+      'SELECT people_count, timestamp FROM crowd_data WHERE location = $1 ORDER BY created_at DESC LIMIT 1',
       [location]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: '暂无数据' });
@@ -145,6 +146,7 @@ app.get('/api/locations', async (req, res) => {
   }
 });
 
+// --- 4. 获取最近N条记录的接口（给统计页用）---
 app.get('/api/recent', async (req, res) => {
   const { location, limit } = req.query;
   if (!location) {
@@ -153,8 +155,9 @@ app.get('/api/recent', async (req, res) => {
   const recordLimit = parseInt(limit) || 11; // 默认返回11条
 
   try {
+    // 修改：按 created_at 降序，获取最近插入的记录
     const result = await pool.query(
-      'SELECT people_count, timestamp FROM crowd_data WHERE location = $1 ORDER BY timestamp DESC LIMIT $2',
+      'SELECT people_count, timestamp FROM crowd_data WHERE location = $1 ORDER BY created_at DESC LIMIT $2',
       [location, recordLimit]
     );
     res.json(result.rows);
